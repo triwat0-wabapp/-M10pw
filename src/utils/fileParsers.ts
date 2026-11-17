@@ -83,7 +83,7 @@ function buildParcelFromProps(
   };
 
   const parcelCode = str(
-    ['PARCEL_COD', 'PARCEL_CODE', 'ltax_code', 'รหัสแปลงที่ดิน', 'PCODE'],
+    ['PARCEL_COD', 'PARCEL_CODE', 'ltax_code', 'รหัสแปลงที่ดิน', 'PCODE', 'Name'],
     `01B${String(index + 1).padStart(3, '0')}`
   );
   const zone = parcelCode.slice(0, 2) || '01';
@@ -148,7 +148,7 @@ function buildParcelFromProps(
     snappedVerticesCount: 0,
     calculatedSqWa: fromGeom.totalSqWa,
     areaDiffPercent: 0,
-    note: 'นำเข้าจากไฟล์มาตรา 10 กรมที่ดิน',
+    note: 'นำเข้าจากไฟล์มาตรา 10 หรือ KMZ กรมที่ดิน',
     selectedForPt7: true,
   };
 }
@@ -157,7 +157,6 @@ function buildParcelFromProps(
  * Decode DBF text bytes safely trying UTF-8 first, then falling back to Windows-874 (Thai TIS-620)
  */
 function decodeDbfString(bytes: Uint8Array): string {
-  // Trim trailing null or space bytes
   let end = bytes.length;
   while (end > 0 && (bytes[end - 1] === 0 || bytes[end - 1] === 32)) {
     end--;
@@ -220,16 +219,15 @@ function parseDbfBuffer(buffer: ArrayBuffer): Record<string, string>[] {
 function parseShpPolygons(buffer: ArrayBuffer, utmZone: 47 | 48): Point2D[][] {
   const view = new DataView(buffer);
   const polygons: Point2D[][] = [];
-  let offset = 100; // Skip 100-byte SHP file header
+  let offset = 100;
 
   while (offset + 8 <= buffer.byteLength) {
-    const contentLengthWords = view.getInt32(offset + 4, false); // Big-endian
+    const contentLengthWords = view.getInt32(offset + 4, false);
     const contentBytes = contentLengthWords * 2;
     const recStart = offset + 8;
     if (recStart + contentBytes > buffer.byteLength) break;
 
     const shapeType = view.getInt32(recStart, true);
-    // Polygon (5), PolygonZ (15), PolygonM (25)
     if (shapeType === 5 || shapeType === 15 || shapeType === 25) {
       const numParts = view.getInt32(recStart + 36, true);
       const numPoints = view.getInt32(recStart + 40, true);
@@ -260,11 +258,87 @@ function parseShpPolygons(buffer: ArrayBuffer, utmZone: 47 | 48): Point2D[][] {
   return polygons;
 }
 
+/**
+ * Parse KML string or KMZ zip archive containing KML data from Google Earth / LandsMaps
+ */
+function parseKmlString(kmlText: string, utmZone: 47 | 48): DolSection10Parcel[] {
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(kmlText, 'text/xml');
+  const placemarks = xml.getElementsByTagName('Placemark');
+  const parcels: DolSection10Parcel[] = [];
+
+  for (let i = 0; i < placemarks.length; i++) {
+    const pm = placemarks[i];
+    const nameEl = pm.getElementsByTagName('name')[0];
+    const descEl = pm.getElementsByTagName('description')[0];
+    const name = nameEl ? nameEl.textContent?.trim() || `แปลงที่ ${i + 1}` : `แปลงที่ ${i + 1}`;
+    const desc = descEl ? descEl.textContent?.trim() || '' : '';
+
+    // Extract coordinates from Polygon or LinearRing
+    const polyEl = pm.getElementsByTagName('Polygon')[0] || pm.getElementsByTagName('LinearRing')[0];
+    if (!polyEl) continue;
+    const coordEl = polyEl.getElementsByTagName('coordinates')[0];
+    if (!coordEl || !coordEl.textContent) continue;
+
+    const rawCoordsStr = coordEl.textContent.trim();
+    const coordTuples = rawCoordsStr.split(/\s+/);
+    const ring: number[][] = [];
+
+    for (const t of coordTuples) {
+      const parts = t.split(',');
+      if (parts.length >= 2) {
+        const lng = Number(parts[0]);
+        const lat = Number(parts[1]);
+        if (!Number.isNaN(lng) && !Number.isNaN(lat)) {
+          ring.push([lng, lat]);
+        }
+      }
+    }
+
+    if (ring.length >= 3) {
+      const polygon = normalizeRingCoords(ring, utmZone);
+      const props: Record<string, unknown> = {
+        PARCEL_CODE: `01KMZ${String(i + 1).padStart(3, '0')}`,
+        DEED_NO: name.replace(/[^0-9]/g, '') || `${85000 + i}`,
+        OWNER_NAME: desc ? desc.slice(0, 40) : `ผู้ถือครองแปลง KMZ ${i + 1}`,
+      };
+      parcels.push(buildParcelFromProps(props, polygon, i));
+    }
+  }
+
+  return parcels;
+}
+
 export async function parseSection10File(
   file: File,
   utmZone: 47 | 48 = 47
 ): Promise<DolSection10Parcel[]> {
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
+
+  if (ext === 'kmz') {
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const kmlEntry = Object.values(zip.files).find((f) =>
+      f.name.toLowerCase().endsWith('.kml')
+    );
+    if (!kmlEntry) {
+      throw new Error('ไม่พบไฟล์ .kml ภายในไฟล์ .kmz กรุณาตรวจสอบไฟล์ KMZ');
+    }
+    const kmlText = await kmlEntry.async('text');
+    const parcels = parseKmlString(kmlText, utmZone);
+    if (parcels.length === 0) {
+      throw new Error('ไม่พบข้อมูล Polygon Placemark ภายในไฟล์ KMZ');
+    }
+    return parcels;
+  }
+
+  if (ext === 'kml') {
+    const kmlText = await file.text();
+    const parcels = parseKmlString(kmlText, utmZone);
+    if (parcels.length === 0) {
+      throw new Error('ไม่พบข้อมูล Polygon Placemark ภายในไฟล์ KML');
+    }
+    return parcels;
+  }
 
   if (ext === 'zip') {
     const zip = await JSZip.loadAsync(await file.arrayBuffer());
@@ -370,7 +444,6 @@ export async function parseSection10File(
         rowObj[h] = cols[idx] || '';
       });
 
-      // Parse WKT POLYGON((x y, x y, ...)) or fallback box around centroid
       const wkt = rowObj.WKT || rowObj.wkt || rowObj.GEOMETRY || rowObj.geometry || '';
       let polygon: Point2D[] = [];
       const match = wkt.match(/POLYGON\s*\(\(([^)]+)\)\)/i);
@@ -403,7 +476,7 @@ export async function parseSection10File(
     return parcels;
   }
 
-  throw new Error('รองรับเฉพาะไฟล์ .zip (Shapefile), .geojson, .json หรือ .csv');
+  throw new Error('รองรับเฉพาะไฟล์ .kmz, .kml, .zip (Shapefile), .geojson หรือ .csv');
 }
 
 export function exportAdjustedGeoJSON(

@@ -11,6 +11,7 @@ import {
 import { DolSection10Parcel } from '../types/gis';
 import { getLandUseLabel } from '../utils/gisEngine';
 import { parseSection10File } from '../utils/fileParsers';
+import { LandsMapLookup } from './LandsMapLookup';
 
 interface Section10ImportViewProps {
   parcels: DolSection10Parcel[];
@@ -110,7 +111,7 @@ export const Section10ImportView: React.FC<Section10ImportViewProps> = ({
       const parsed = await parseSection10File(files[0], utmZone);
       onImportParcels(parsed, importMode);
       setUploadSuccess(
-        `นำเข้าข้อมูลมาตรา 10 จากไฟล์ "${files[0].name}" สำเร็จ จำนวน ${parsed.length} แปลง`
+        `นำเข้าข้อมูลมาตรา 10/KMZ จากไฟล์ "${files[0].name}" สำเร็จ จำนวน ${parsed.length} แปลง`
       );
     } catch (err) {
       setUploadError(
@@ -119,6 +120,10 @@ export const Section10ImportView: React.FC<Section10ImportViewProps> = ({
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const handleAddLandsMapParcel = (newParcel: DolSection10Parcel) => {
+    onImportParcels([newParcel], 'append');
   };
 
   const downloadSampleGeoJson = () => {
@@ -155,40 +160,6 @@ export const Section10ImportView: React.FC<Section10ImportViewProps> = ({
                 [674223.5, 1555537.8],
                 [674183.5, 1555537.8],
                 [674183.5, 1555512.8],
-              ],
-            ],
-          },
-        },
-        {
-          type: 'Feature',
-          properties: {
-            PARCEL_CODE: '01B002',
-            DEED_TYPE: 'โฉนดที่ดิน',
-            DEED_NO: '99102',
-            UTMMAP: '5137 III 6854-04',
-            LAND_NO: '402',
-            SURVEY_NO: '5102',
-            OWNER_NAME: 'บริษัท ไทยพัฒนา โลจิสติกส์ จำกัด',
-            OWNER_ID: '0-1055-62011-09-1',
-            OWNER_ADDR: '99 ถ.พหลโยธิน ต.คลองหนึ่ง อ.คลองหลวง จ.ปทุมธานี',
-            RAI: 1,
-            NGAN: 1,
-            WA: 0,
-            LAND_USE: 'พาณิชยกรรม',
-            ASSESS_VAL: 21000,
-            BLDG_TYPE: 'คลังสินค้าและสำนักงาน',
-            HOUSE_NO: '99',
-            BLDG_AREA: 480,
-          },
-          geometry: {
-            type: 'Polygon',
-            coordinates: [
-              [
-                [674223.8, 1555512.6],
-                [674273.8, 1555512.6],
-                [674273.8, 1555552.6],
-                [674223.8, 1555552.6],
-                [674223.8, 1555512.6],
               ],
             ],
           },
@@ -251,15 +222,18 @@ export const Section10ImportView: React.FC<Section10ImportViewProps> = ({
         </div>
       </div>
 
-      {/* Upload / Import Box */}
+      {/* LandsMap Deed Lookup Component */}
+      <LandsMapLookup onAddParcel={handleAddLandsMapParcel} utmZone={utmZone} />
+
+      {/* Upload / Import Box (.kmz, .kml, .zip, .geojson, .csv) */}
       <div className="bg-white border border-slate-200 rounded-lg p-5">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
-              นำเข้าชุดข้อมูลมาตรา 10 จากกรมที่ดิน
+              นำเข้าไฟล์แผนที่ KMZ / KML / Shapefile / GeoJSON จากกรมที่ดิน
             </h2>
             <p className="text-sm text-slate-500 mt-0.5">
-              รองรับไฟล์ Shapefile (.zip ที่มี .shp/.dbf ภาษาไทย TIS-620 และ UTF-8), GeoJSON (.geojson) หรือ CSV พร้อมพิกัด WKT
+              รองรับไฟล์ Google Earth KMZ/KML, Shapefile (.zip), GeoJSON (.geojson) หรือ CSV พร้อมพิกัด
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -330,24 +304,24 @@ export const Section10ImportView: React.FC<Section10ImportViewProps> = ({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".zip,.geojson,.json,.csv"
+            accept=".kmz,.kml,.zip,.geojson,.json,.csv"
             className="hidden"
             onChange={(e) => handleFiles(e.target.files)}
           />
           <div className="flex flex-col items-center gap-2">
             <FolderUp className="w-7 h-7 text-blue-700" />
             <div className="text-sm font-medium text-slate-800">
-              ลากไฟล์มาวางที่นี่ หรือเลือกไฟล์จากเครื่องเพื่อนำเข้าข้อมูลมาตรา 10
+              ลากไฟล์ KMZ, KML, ZIP (Shapefile) หรือ GeoJSON มาวางที่นี่
             </div>
             <div className="text-xs text-slate-500">
-              ไฟล์รองรับ: Shapefile Archive (.zip) · GeoJSON (.geojson, .json) · CSV (.csv)
+              รองรับ: .kmz, .kml · Shapefile (.zip) · GeoJSON (.geojson, .json) · CSV
             </div>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className="mt-2 px-4 py-2 text-xs font-medium text-white bg-blue-800 rounded-md hover:bg-blue-900 whitespace-nowrap shrink-0"
             >
-              เลือกไฟล์ข้อมูลมาตรา 10
+              เลือกไฟล์แผนที่ (KMZ / Shapefile)
             </button>
           </div>
         </div>
